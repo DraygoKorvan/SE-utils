@@ -37,7 +37,19 @@ namespace SEUtils
 	[Serializable()]
 	public class SEUtilssettings
 	{
-		public bool allowpos = true;
+		private bool m_allowpos = true;
+		private int m_resolution = 1000;
+
+		public int resolution
+		{
+			set { if (value > 100) m_resolution = value; }
+			get { return m_resolution; }
+		}
+		public bool allowpos
+		{
+			set { m_allowpos = value; }
+			get { return m_allowpos; }
+		}
 	}
 
 	public class SEUtils : PluginBase, IChatEventHandler
@@ -45,6 +57,8 @@ namespace SEUtils
 		
 		#region "Attributes"
 		SEUtilssettings settings = new SEUtilssettings();
+		Thread m_blockManager;
+		bool m_running = false;
 		#endregion
 
 		#region "Constructors and Initializers"
@@ -58,9 +72,14 @@ namespace SEUtils
 		{
 
 			allowPos = true;
+			resolution = 1000;
 			Console.WriteLine("SE Utils Plugin '" + Id.ToString() + "' initialized!");
 			loadXML();
-
+			//start up ship manager
+			m_running = true;
+			m_blockManager = new Thread(beaconLoop);
+			m_blockManager.Priority = ThreadPriority.BelowNormal;//make sure this thread isnt high priority
+			m_blockManager.Start();
 		}
 
 		#endregion
@@ -69,10 +88,17 @@ namespace SEUtils
 
 		[Browsable(true)]
 		[ReadOnly(true)]
-		public string Location
+		public string DefaultLocation
 		{
 			get { return System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\"; }
-		
+
+		}
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public string Location
+		{
+			get { return SandboxGameAssemblyWrapper.Instance.GetServerConfig().LoadWorld + "\\"; }
+
 		}
 
 		[Category("SE-Utils")]
@@ -84,7 +110,15 @@ namespace SEUtils
 			get { return settings.allowpos; }
 			set { settings.allowpos = value; }
 		}
-
+		[Category("SE-Utils")]
+		[Description("Resolution in milliseconds of the beacon update, 1000 = 1 second")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public int resolution
+		{
+			get { return settings.resolution; }
+			set { settings.resolution = value; }
+		}
 		#endregion
 
 		#region "Methods"
@@ -93,20 +127,38 @@ namespace SEUtils
 		{
 
 			XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
-			TextWriter writer = new StreamWriter(Location + "Configuration.xml");
+			TextWriter writer = new StreamWriter(Location + "SEUtil-Settings.xml");
 			x.Serialize(writer, settings);
 			writer.Close();
 
 		}
-		public void loadXML(bool defaults)
+		public void loadXML(bool l_default)
 		{
 			try
 			{
-				if (File.Exists(Location + "Configuration.xml"))
+				if (File.Exists(Location + "SEUtil-Settings.xml") && !l_default)
+				{
+
+					XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
+					TextReader reader = new StreamReader(Location + "SEUtil-Settings.xml");
+					SEUtilssettings obj = (SEUtilssettings)x.Deserialize(reader);
+					settings = obj;
+					reader.Close();
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				LogManager.APILog.WriteLineAndConsole("Could not load configuration: " + ex.ToString());
+			}
+			try
+			{
+				if (File.Exists(DefaultLocation + "SEUtil-Settings.xml"))
 				{
 					XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
-					TextReader reader = new StreamReader(Location + "Configuration.xml");
-					settings = (SEUtilssettings)x.Deserialize(reader);
+					TextReader reader = new StreamReader(DefaultLocation + "SEUtil-Settings.xml");
+					SEUtilssettings obj = (SEUtilssettings)x.Deserialize(reader);
+					settings = obj;
 					reader.Close();
 				}
 			}
@@ -119,6 +171,43 @@ namespace SEUtils
 		public void loadXML()
 		{
 			loadXML(false);
+		}
+
+		private void beaconLoop()
+		{
+			while(m_running)
+			{
+				Thread.Sleep(resolution);//resolution of this loop
+				List<CubeGridEntity> ships = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
+				foreach (CubeGridEntity ship in ships)
+				{
+					if (ship.IsLoading) continue; //skip
+					Thread.Yield();//could be an expensive function, lets yeild to the OS every iteration. 
+					try
+					{
+						foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
+						{
+							if (cubeBlock is BeaconEntity)
+							{
+								BeaconEntity beacon = (BeaconEntity)cubeBlock;
+								if (beacon.CustomName != null)
+								{
+									string name = beacon.CustomName;
+									if (name.Substring(0, 3) == "Pos")
+									{
+										name = "Pos: " + ship.Position.ToString();
+										beacon.CustomName = name;
+									}
+								}
+							}
+						}
+					}
+					catch (Exception)
+					{
+						continue;//no biggie keep going. 
+					}
+				}
+			}
 		}
 		private CharacterEntity getCharacter(ulong steamid)
 		{
@@ -215,6 +304,7 @@ namespace SEUtils
 
 		public override void Shutdown()
 		{
+			m_running = false;
 			saveXML();
 			return;
 		}
@@ -264,7 +354,7 @@ namespace SEUtils
 							try
 							{
 								floatingObjectCleanup(force);
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Out of bounds floating object cleanup suceeded.");
+								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Floating object cleanup suceeded.");
 							}
 							catch (Exception ex)
 							{
