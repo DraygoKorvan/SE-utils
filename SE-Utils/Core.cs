@@ -39,6 +39,14 @@ namespace SEUtils
 	{
 		private bool m_allowpos = true;
 		private int m_resolution = 1000;
+		private int m_minCleanupDistance = 10;
+		private bool m_allowAntennaPos = true;
+		private bool m_allowAntennaDir = true;
+		private bool m_allowBeaconPos = true;
+		private bool m_allowBeaconDir = true;
+		private int m_maxAssemblerQueue = 10;
+		private int m_maxRefineryQueue = 8;
+		private bool m_tempQueueFix = true;
 
 		public int resolution
 		{
@@ -49,6 +57,47 @@ namespace SEUtils
 		{
 			set { m_allowpos = value; }
 			get { return m_allowpos; }
+		}
+		public int minCleanupDistance
+		{
+			get { return m_minCleanupDistance; }
+			set { if ( value >= 0 ) m_minCleanupDistance = value; }
+		}
+		public int maxRefineryQueue
+		{
+			get { return m_maxRefineryQueue; }
+			set { if (value >= 1) m_maxRefineryQueue = value; }
+		}
+		public int maxAssemblerQueue
+		{
+			get { return m_maxAssemblerQueue; }
+			set { if (value >= 1) m_maxAssemblerQueue = value; }
+		}	
+		public bool allowAntennaPos
+		{
+			get { return m_allowAntennaPos; }
+			set { m_allowAntennaPos = value; }
+		}
+		public bool allowAntennaDir
+		{
+			get { return m_allowAntennaDir; }
+			set { m_allowAntennaDir = value; }
+		}
+		public bool allowBeaconPos
+		{
+			get { return m_allowBeaconPos; }
+			set { m_allowBeaconPos = value; }
+		}
+		public bool allowBeaconDir
+		{
+			get { return m_allowBeaconDir; }
+			set { m_allowBeaconDir = value; }
+		}
+
+		public bool tempQueueFix 
+		{
+			get { return m_tempQueueFix; } 
+			set { m_tempQueueFix = value; }
 		}
 	}
 
@@ -119,6 +168,83 @@ namespace SEUtils
 			get { return settings.resolution; }
 			set { settings.resolution = value; }
 		}
+
+		[Category("SE-Utils")]
+		[Description("Minimum cleanup distance")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public int minCleanupDistance
+		{
+			get { return settings.minCleanupDistance; }
+			set { settings.minCleanupDistance = value; }
+		}
+
+		[Category("SE-Utils")]
+		[Description("Allow Beacon Pos Updates.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool allowBeaconPos
+		{
+			get { return settings.allowBeaconPos; }
+			set { settings.allowBeaconPos = value; }
+		}
+		[Category("SE-Utils")]
+		[Description("Allow Beacon Directional Updates.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool allowBeaconDir
+		{
+			get { return settings.allowBeaconDir; }
+			set { settings.allowBeaconDir = value; }
+		}
+
+		[Category("SE-Utils")]
+		[Description("Allow Antenna Pos Updates.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool allowAntennaPos
+		{
+			get { return settings.allowAntennaPos; }
+			set { settings.allowAntennaPos = value; }
+		}
+		[Category("SE-Utils")]
+		[Description("Allow Antenna Directional Updates.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool allowAntennaDir
+		{
+			get { return settings.allowAntennaDir; }
+			set { settings.allowAntennaDir = value; }
+		}
+
+		[Category("Temp Fix")]
+		[Description("Maximum queue in assembler.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public int maxAssemblerQueue
+		{
+			get { return settings.maxAssemblerQueue; }
+			set { settings.maxAssemblerQueue = value; }
+		}
+
+		[Category("Temp Fix")]
+		[Description("Maximum queue in refinery.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public int maxRefineryQueue
+		{
+			get { return settings.maxRefineryQueue; }
+			set { settings.maxRefineryQueue = value; }
+		}
+		[Category("Temp Fix")]
+		[Description("Enable Temp Fix.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool tempQueueFix
+		{
+			get { return settings.tempQueueFix; }
+			set { settings.tempQueueFix = value; }
+		}
 		#endregion
 
 		#region "Methods"
@@ -187,19 +313,65 @@ namespace SEUtils
 					{
 						foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
 						{
-							if (cubeBlock is BeaconEntity)
+							if (cubeBlock is AntennaEntity)
+							{
+								AntennaEntity antenna = (AntennaEntity)cubeBlock;
+								if (antenna.CustomName != null)
+								{
+									string name = antenna.CustomName;
+									if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
+									{
+										name = "Pos: " + ship.Position.ToString();
+										antenna.CustomName = name;
+									}
+									if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
+									{
+										name = "Dir: " + ship.Forward.ToString();
+										antenna.CustomName = name;
+									}
+								}
+							}
+							else if (cubeBlock is BeaconEntity)
 							{
 								BeaconEntity beacon = (BeaconEntity)cubeBlock;
 								if (beacon.CustomName != null)
 								{
 									string name = beacon.CustomName;
-									if (name.Substring(0, 3) == "Pos")
+									if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
 									{
 										name = "Pos: " + ship.Position.ToString();
 										beacon.CustomName = name;
 									}
+									if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
+									{
+										name = "Dir: " + ship.Forward.ToString();
+										beacon.CustomName = name;
+									}
 								}
 							}
+							else if (cubeBlock is RefineryEntity && tempQueueFix)
+							{
+								RefineryEntity refinary = (RefineryEntity)cubeBlock;
+								
+								if (refinary.Queue.Count > maxRefineryQueue)
+								{
+									refinary.ClearQueue();
+									refinary.Enabled = false;//halt
+								}
+								if (refinary.InputInventory.Items.Count == 0)
+									refinary.ClearQueue();
+								
+							}
+							else if (cubeBlock is AssemblerEntity && tempQueueFix)
+							{
+								AssemblerEntity assembler = (AssemblerEntity)cubeBlock;
+								if (assembler.Queue.Count > maxAssemblerQueue)
+								{
+									assembler.ClearQueue();
+									break;
+								}
+							}
+
 						}
 					}
 					catch (Exception)
@@ -273,7 +445,7 @@ namespace SEUtils
 			int movedist = 50;
 			List<CubeGridEntity> shipList = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
 			int maxsize = dist * 1000;
-			if (maxsize < 10000) throw new Exception("Distance is less than 10km, aborting cleanup.");
+			if (maxsize < minCleanupDistance * 1000) throw new Exception("Distance is less than " + minCleanupDistance.ToString() + "KM, aborting cleanup.");
 			foreach (CubeGridEntity grid in shipList)
 			{
 				if (Math.Abs(grid.Position.X) > maxsize || Math.Abs(grid.Position.Y) > maxsize || Math.Abs(grid.Position.Z) > maxsize)
@@ -315,7 +487,7 @@ namespace SEUtils
 			//PlayerMap.Instance.GetPlayerId(ulong steamId)
 			if (obj.sourceUserId == 0)
 				return;
-			bool isadmin = SandboxGameAssemblyWrapper.Instance.IsUserAdmin(obj.sourceUserId);
+			bool isadmin = PlayerManager.Instance.IsUserAdmin(obj.sourceUserId);
 			
 			if( obj.message[0] == '/' )
 			{
