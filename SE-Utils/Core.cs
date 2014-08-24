@@ -44,9 +44,6 @@ namespace SEUtils
 		private bool m_allowAntennaDir = true;
 		private bool m_allowBeaconPos = true;
 		private bool m_allowBeaconDir = true;
-		private int m_maxAssemblerQueue = 10;
-		private int m_maxRefineryQueue = 8;
-		private bool m_tempQueueFix = true;
 
 		public int resolution
 		{
@@ -63,16 +60,6 @@ namespace SEUtils
 			get { return m_minCleanupDistance; }
 			set { if ( value >= 0 ) m_minCleanupDistance = value; }
 		}
-		public int maxRefineryQueue
-		{
-			get { return m_maxRefineryQueue; }
-			set { if (value >= 1) m_maxRefineryQueue = value; }
-		}
-		public int maxAssemblerQueue
-		{
-			get { return m_maxAssemblerQueue; }
-			set { if (value >= 1) m_maxAssemblerQueue = value; }
-		}	
 		public bool allowAntennaPos
 		{
 			get { return m_allowAntennaPos; }
@@ -94,11 +81,6 @@ namespace SEUtils
 			set { m_allowBeaconDir = value; }
 		}
 
-		public bool tempQueueFix 
-		{
-			get { return m_tempQueueFix; } 
-			set { m_tempQueueFix = value; }
-		}
 	}
 
 	public class SEUtils : PluginBase, IChatEventHandler
@@ -237,34 +219,6 @@ namespace SEUtils
 			set { settings.allowAntennaDir = value; }
 		}
 
-		[Category("Temp Fix")]
-		[Description("Maximum queue in assembler.")]
-		[Browsable(true)]
-		[ReadOnly(false)]
-		public int maxAssemblerQueue
-		{
-			get { return settings.maxAssemblerQueue; }
-			set { settings.maxAssemblerQueue = value; }
-		}
-
-		[Category("Temp Fix")]
-		[Description("Maximum queue in refinery.")]
-		[Browsable(true)]
-		[ReadOnly(false)]
-		public int maxRefineryQueue
-		{
-			get { return settings.maxRefineryQueue; }
-			set { settings.maxRefineryQueue = value; }
-		}
-		[Category("Temp Fix")]
-		[Description("Enable Temp Fix.")]
-		[Browsable(true)]
-		[ReadOnly(false)]
-		public bool tempQueueFix
-		{
-			get { return settings.tempQueueFix; }
-			set { settings.tempQueueFix = value; }
-		}
 		#endregion
 
 		#region "Methods"
@@ -369,29 +323,6 @@ namespace SEUtils
 									}
 								}
 							}
-							else if (cubeBlock is RefineryEntity && tempQueueFix)
-							{
-								RefineryEntity refinary = (RefineryEntity)cubeBlock;
-								
-								if (refinary.Queue.Count > maxRefineryQueue)
-								{
-									refinary.ClearQueue();
-									refinary.Enabled = false;//halt
-								}
-								if (refinary.InputInventory.Items.Count == 0)
-									refinary.ClearQueue();
-								
-							}
-							else if (cubeBlock is AssemblerEntity && tempQueueFix)
-							{
-								AssemblerEntity assembler = (AssemblerEntity)cubeBlock;
-								if (assembler.Queue.Count > maxAssemblerQueue)
-								{
-									assembler.ClearQueue();
-									break;
-								}
-							}
-
 						}
 					}
 					catch (Exception)
