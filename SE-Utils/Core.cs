@@ -129,6 +129,26 @@ namespace SEUtils
 			m_blockManager = new Thread(beaconLoop);
 			m_blockManager.Priority = ThreadPriority.BelowNormal;//make sure this thread isnt high priority
 			m_blockManager.Start();
+
+			//Register Chat Commands
+			ChatManager.ChatCommand command = new ChatManager.ChatCommand();
+			command.callback = saveXML;
+			command.command = "utils-save";
+			command.requiresAdmin = true;
+			ChatManager.Instance.RegisterChatCommand(command);
+
+			command = new ChatManager.ChatCommand();
+			command.callback = loadXML;
+			command.command = "utils-load";
+			command.requiresAdmin = true;
+			ChatManager.Instance.RegisterChatCommand(command);
+
+			command = new ChatManager.ChatCommand();
+			command.callback = loadDefaults;
+			command.command = "utils-loaddefaults";
+			command.requiresAdmin = true;
+			ChatManager.Instance.RegisterChatCommand(command);
+			//End Register Chat commands
 		}
 
 		#endregion
@@ -248,7 +268,7 @@ namespace SEUtils
 		#endregion
 
 		#region "Methods"
-
+		#region "Core"
 		public void saveXML()
 		{
 
@@ -467,6 +487,7 @@ namespace SEUtils
 			}
 			
 		}
+		#endregion
 		#region "EventHandlers"
 
 		public override void Update()
@@ -584,21 +605,6 @@ namespace SEUtils
 					}
 					return;
 				}
-				if (isadmin && words[0] == "/util-save")
-				{
-					ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "SE-utils - saved");
-					saveXML();
-				}
-				if (isadmin && words[0] == "/util-load")
-				{
-					ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "SE-utils - loaded");
-					loadXML();
-				}
-				if (isadmin && words[0] == "/util-loaddefaults")
-				{
-					ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "SE-utils - loaded defaults");
-					loadXML(true);
-				}
 			}
 			return; 
 		}
@@ -608,7 +614,54 @@ namespace SEUtils
 			return; //no handling for motd right now
 		}
 		#endregion
+		#region "Chat Callbacks"
+		public void saveXML(ChatManager.ChatEvent _event)
+		{
+			saveXML();
+			try
+			{
+				if (_event.remoteUserId > 0)
+					ChatManager.Instance.SendPrivateChatMessage(_event.remoteUserId, "Utils configuration saved.");
+				else
+					Console.WriteLine("Utils configuration saved.");
+			}
+			catch
+			{
+				//donothing
+			}
 
+		}
+		public void loadXML(ChatManager.ChatEvent _event)
+		{
+			loadXML(false);
+			try
+			{
+				if (_event.remoteUserId > 0)
+					ChatManager.Instance.SendPrivateChatMessage(_event.remoteUserId, "Utils configuration loaded.");
+				else
+					Console.WriteLine("Utils configuration loaded.");
+			}
+			catch
+			{
+				//donothing
+			}
+		}
+		public void loadDefaults(ChatManager.ChatEvent _event)
+		{
+			loadXML(true);
+			try
+			{
+				if (_event.remoteUserId > 0)
+					ChatManager.Instance.SendPrivateChatMessage(_event.remoteUserId, "Utils configuration defaults loaded.");
+				else
+					Console.WriteLine("Utils configuration defaults loaded.");
+			}
+			catch
+			{
+				//donothing
+			}
+		}
+		#endregion
 
 
 		#endregion
