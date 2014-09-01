@@ -30,66 +30,28 @@ using SEModAPI.API;
 using VRageMath;
 using VRage.Common.Utils;
 
-
+using SEUtils.Exceptions;
 
 namespace SEUtils
 {
-	[Serializable()]
-	public class SEUtilssettings
-	{
-		private bool m_allowpos = true;
-		private int m_resolution = 1000;
-		private int m_minCleanupDistance = 10;
-		private bool m_allowAntennaPos = true;
-		private bool m_allowAntennaDir = true;
-		private bool m_allowBeaconPos = true;
-		private bool m_allowBeaconDir = true;
-
-		public int resolution
-		{
-			set { if (value > 100) m_resolution = value; }
-			get { return m_resolution; }
-		}
-		public bool allowpos
-		{
-			set { m_allowpos = value; }
-			get { return m_allowpos; }
-		}
-		public int minCleanupDistance
-		{
-			get { return m_minCleanupDistance; }
-			set { if ( value >= 0 ) m_minCleanupDistance = value; }
-		}
-		public bool allowAntennaPos
-		{
-			get { return m_allowAntennaPos; }
-			set { m_allowAntennaPos = value; }
-		}
-		public bool allowAntennaDir
-		{
-			get { return m_allowAntennaDir; }
-			set { m_allowAntennaDir = value; }
-		}
-		public bool allowBeaconPos
-		{
-			get { return m_allowBeaconPos; }
-			set { m_allowBeaconPos = value; }
-		}
-		public bool allowBeaconDir
-		{
-			get { return m_allowBeaconDir; }
-			set { m_allowBeaconDir = value; }
-		}
-
-	}
-
-	public class SEUtils : PluginBase, IChatEventHandler
+	public class SEUtils : PluginBase, IChatEventHandler, ICubeGridHandler
 	{
 		
 		#region "Attributes"
-		SEUtilssettings settings = new SEUtilssettings();
+
+		SEUtilsSettings settings = new SEUtilsSettings();
+
 		Thread m_blockManager;
+		Thread m_scriptManager;
+
 		bool m_running = false;
+		bool m_loading = true;
+		bool m_debugging = false;
+		bool m_newmethod = true;
+		int m_debuglevel = 1;
+
+		List<long> m_cubeGridsEntityID = new List<long>();
+
 		#endregion
 
 		#region "Constructors and Initializers"
@@ -101,7 +63,7 @@ namespace SEUtils
 
 		public override void Init()
 		{
-
+			m_loading = true;
 			allowPos = true;
 			resolution = 1000;
 			Console.WriteLine("SE Utils Plugin '" + Id.ToString() + "' initialized!");
@@ -112,6 +74,11 @@ namespace SEUtils
 			m_blockManager.Priority = ThreadPriority.BelowNormal;//make sure this thread isnt high priority
 			m_blockManager.Start();
 
+			m_scriptManager = new Thread(scriptloop);
+			m_scriptManager.Priority = ThreadPriority.BelowNormal;
+			m_scriptManager.Start();
+
+			#region "Chat Command Registry"
 			//Register Chat Commands
 			ChatManager.ChatCommand command = new ChatManager.ChatCommand();
 			command.callback = saveXML;
@@ -130,7 +97,15 @@ namespace SEUtils
 			command.command = "utils-loaddefaults";
 			command.requiresAdmin = true;
 			ChatManager.Instance.RegisterChatCommand(command);
+
+			command = new ChatManager.ChatCommand();
+			command.callback = UtilsCleanup;
+			command.command = "utils-cleanup";
+			command.requiresAdmin = true;
+			ChatManager.Instance.RegisterChatCommand(command);
+
 			//End Register Chat commands
+			#endregion
 		}
 
 		#endregion
@@ -219,6 +194,92 @@ namespace SEUtils
 			set { settings.allowAntennaDir = value; }
 		}
 
+		[Category("Scripts")]
+		[Description("Create chat scripts triggered on an interval.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public List<SEUtilsScript> script
+		{
+			get { return settings.scripts; }
+			set { settings.scripts = value; }
+		}
+
+		[Category("Plugin Status")]
+		[Description("Beacon Thread state")]
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public string BeaconLoopThreadState
+		{
+			get { return m_blockManager.ThreadState.ToString(); }
+		}
+		[Category("Plugin Status")]
+		[Description("Script Thread state")]
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public string ScriptLoopThreadState
+		{
+			get { return m_scriptManager.ThreadState.ToString(); }
+		}
+		[Category("Plugin Status")]
+		[Description("Running")]
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public bool isrunning
+		{
+			get { return m_running; }
+		}
+		[Category("Plugin Status")]
+		[Description("is loaded")]
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public bool isloaded
+		{
+			get { return !m_loading; }
+		}
+		[Category("Plugin Status")]
+		[Description("is debugging")]
+		[Browsable(true)]
+		[ReadOnly(true)]
+		public bool isdebugging
+		{
+			get { return m_debugging || SandboxGameAssemblyWrapper.IsDebugging; }
+		}
+		[Category("Plugin Status")]
+		[Description("Debug Output")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool debugging
+		{
+			get { return m_debugging; }
+			set { m_debugging = value; }
+		}
+		[Category("Plugin Status")]
+		[Description("Debug Level")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public int debugLevel
+		{
+			get { return m_debuglevel; }
+			set { m_debuglevel = value; }
+		}
+		[Category("Plugin Status")]
+		[Description("Entity ID list")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public List<long> watchedEntityIDs
+		{
+			get { return m_cubeGridsEntityID; }
+			set { m_cubeGridsEntityID = value; }
+		}
+		[Category("Plugin Status")]
+		[Description("Use new update method, should be less lag inducing.")]
+		[Browsable(true)]
+		[ReadOnly(false)]
+		public bool newmethod
+		{
+			get { return m_newmethod; }
+			set { m_newmethod = value; }
+		}
 		#endregion
 
 		#region "Methods"
@@ -226,22 +287,22 @@ namespace SEUtils
 		public void saveXML()
 		{
 
-			XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
-			TextWriter writer = new StreamWriter(Location + "SEUtil-Settings.xml");
+			XmlSerializer x = new XmlSerializer(typeof(SEUtilsSettings));
+			TextWriter writer = new StreamWriter(Location + "SEUtils-Settings.xml");
 			x.Serialize(writer, settings);
 			writer.Close();
 
 		}
-		public void loadXML(bool l_default)
+		public void loadXML(bool l_default = false)
 		{
 			try
 			{
-				if (File.Exists(Location + "SEUtil-Settings.xml") && !l_default)
+				if (File.Exists(Location + "SEUtils-Settings.xml") && !l_default)
 				{
 
-					XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
-					TextReader reader = new StreamReader(Location + "SEUtil-Settings.xml");
-					SEUtilssettings obj = (SEUtilssettings)x.Deserialize(reader);
+					XmlSerializer x = new XmlSerializer(typeof(SEUtilsSettings));
+					TextReader reader = new StreamReader(Location + "SEUtils-Settings.xml");
+					SEUtilsSettings obj = (SEUtilsSettings)x.Deserialize(reader);
 					settings = obj;
 					reader.Close();
 					return;
@@ -253,11 +314,11 @@ namespace SEUtils
 			}
 			try
 			{
-				if (File.Exists(DefaultLocation + "SEUtil-Settings.xml"))
+				if (File.Exists(DefaultLocation + "SEUtils-Settings.xml"))
 				{
-					XmlSerializer x = new XmlSerializer(typeof(SEUtilssettings));
-					TextReader reader = new StreamReader(DefaultLocation + "SEUtil-Settings.xml");
-					SEUtilssettings obj = (SEUtilssettings)x.Deserialize(reader);
+					XmlSerializer x = new XmlSerializer(typeof(SEUtilsSettings));
+					TextReader reader = new StreamReader(DefaultLocation + "SEUtils-Settings.xml");
+					SEUtilsSettings obj = (SEUtilsSettings)x.Deserialize(reader);
 					settings = obj;
 					reader.Close();
 				}
@@ -268,68 +329,327 @@ namespace SEUtils
 			}
 
 		}
-		public void loadXML()
-		{
-			loadXML(false);
-		}
-
 		private void beaconLoop()
 		{
+			Thread.Sleep(10000);
+			List<CubeGridEntity> ships = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
+			foreach (CubeGridEntity ship in ships)
+			{
+				if(debugging)
+					LogManager.APILog.WriteLineAndConsole("Added " + ship.EntityId.ToString());
+				m_cubeGridsEntityID.Add(ship.EntityId);
+			}
+			m_loading = false;
 			while(m_running)
 			{
-				Thread.Sleep(resolution);//resolution of this loop
-				List<CubeGridEntity> ships = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
-				foreach (CubeGridEntity ship in ships)
+				if(newmethod)
 				{
-					if (ship.IsLoading) continue; //skip
-					Thread.Yield();//could be an expensive function, lets yeild to the OS every iteration. 
-					try
+					#region "beacon/antenna update loop"
+					List<long> _entityIDList = new List<long>(m_cubeGridsEntityID);
+					foreach (long shipEntityId in _entityIDList)
 					{
-						foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
+						try
 						{
-							if (cubeBlock is AntennaEntity)
+							CubeGridEntity ship = (CubeGridEntity)GameEntityManager.GetEntity(shipEntityId);
+							if (ship == null)
 							{
-								AntennaEntity antenna = (AntennaEntity)cubeBlock;
-								if (antenna.CustomName != null)
+								if (isdebugging)
+									LogManager.APILog.WriteLineAndConsole("Removed " + shipEntityId.ToString());
+								throw new NullReferenceException();
+
+							}
+							if (ship.IsLoading)
+							{
+								if (isdebugging)
+									LogManager.APILog.WriteLineAndConsole("Ship is loading: " + shipEntityId.ToString());
+								continue;
+							}
+
+							Thread.Yield();//could be an expensive function, lets yeild to the OS every iteration. 
+							try
+							{
+								foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
 								{
-									string name = antenna.CustomName;
-									if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
+									if (cubeBlock is AntennaEntity)
 									{
-										name = "Pos: " + ship.Position.ToString();
-										antenna.CustomName = name;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole("Antenna found getting name - Entityid: " + shipEntityId.ToString());
+										}
+										AntennaEntity antenna = (AntennaEntity)cubeBlock;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(antenna.CustomName.ToString());
+										}
+										if (antenna.CustomName != null)
+										{
+											string name = antenna.CustomName;
+											if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												name = "Pos: " + ship.Position.ToString();
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+											if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												name = "Dir: " + ship.Forward.ToString();
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+										}
 									}
-									if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
+									else if (cubeBlock is BeaconEntity)
 									{
-										name = "Dir: " + ship.Forward.ToString();
-										antenna.CustomName = name;
+
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole("Beacon found getting name - Entityid: " + shipEntityId.ToString());
+										}
+										BeaconEntity beacon = (BeaconEntity)cubeBlock;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(beacon.CustomName.ToString());
+										}
+										if (beacon.CustomName != null)
+										{
+											string name = beacon.CustomName;
+											if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												name = "Pos: " + ship.Position.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
+											}
+											if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												name = "Dir: " + ship.Forward.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
+											}
+										}
 									}
 								}
 							}
-							else if (cubeBlock is BeaconEntity)
+							catch (Exception ex)
 							{
-								BeaconEntity beacon = (BeaconEntity)cubeBlock;
-								if (beacon.CustomName != null)
+								if (isdebugging)
 								{
-									string name = beacon.CustomName;
-									if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
+									LogManager.APILog.WriteLineAndConsole("Exception thrown when setting beacons/antenna on " + shipEntityId.ToString());
+									LogManager.APILog.WriteLineAndConsole(ex.ToString());
+								}
+								continue;
+							}
+						}
+						catch (Exception ex)
+						{
+							//could not pull remove it
+							if (isdebugging)
+								LogManager.APILog.WriteLineAndConsole("Game entity manager returned null. EntityID " + shipEntityId + " error: " + ex.ToString());
+							m_cubeGridsEntityID.Remove(shipEntityId);
+							continue;
+						}
+					}
+					#endregion
+				}
+				else
+				{
+					#region "beacon/antenna update loop OLD method"
+					List<CubeGridEntity> _entityList = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
+					foreach (CubeGridEntity ship in _entityList)
+					{
+						try
+						{
+							//CubeGridEntity ship = (CubeGridEntity)GameEntityManager.GetEntity(shipEntityId);
+							long shipEntityId = ship.EntityId;
+							if (ship.IsLoading)
+							{
+								if (isdebugging)
+									LogManager.APILog.WriteLineAndConsole("Ship is loading: " + shipEntityId.ToString());
+								continue;
+							}
+
+							Thread.Yield();//could be an expensive function, lets yeild to the OS every iteration. 
+							try
+							{
+								foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
+								{
+									if (cubeBlock is AntennaEntity)
 									{
-										name = "Pos: " + ship.Position.ToString();
-										beacon.CustomName = name;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole("Antenna found getting name - Entityid: " + shipEntityId.ToString());
+										}
+										AntennaEntity antenna = (AntennaEntity)cubeBlock;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(antenna.CustomName.ToString());
+										}
+										if (antenna.CustomName != null)
+										{
+											string name = antenna.CustomName;
+											if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
+											{
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												name = "Pos: " + ship.Position.ToString();
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+											if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
+											{
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												name = "Dir: " + ship.Forward.ToString();
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+										}
 									}
-									if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
+									else if (cubeBlock is BeaconEntity)
 									{
-										name = "Dir: " + ship.Forward.ToString();
-										beacon.CustomName = name;
+
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole("Beacon found getting name - Entityid: " + shipEntityId.ToString());
+										}
+										BeaconEntity beacon = (BeaconEntity)cubeBlock;
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(beacon.CustomName.ToString());
+										}
+										if (beacon.CustomName != null)
+										{
+											string name = beacon.CustomName;
+											if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
+											{
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												name = "Pos: " + ship.Position.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
+											}
+											if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
+											{
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												name = "Dir: " + ship.Forward.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
+											}
+										}
 									}
 								}
+							}
+							catch (Exception ex)
+							{
+								if (isdebugging)
+								{
+									LogManager.APILog.WriteLineAndConsole("Exception thrown when setting beacons/antenna on " + shipEntityId.ToString());
+									LogManager.APILog.WriteLineAndConsole(ex.ToString());
+								}
+								continue;
+							}
+						}
+						catch (Exception ex)
+						{
+							//could not pull remove it
+							if (isdebugging)
+								LogManager.APILog.WriteLineAndConsole("SEUTils beacon loop error: " + ex.ToString());
+							//m_cubeGridsEntityID.Remove(shipEntityId);
+							continue;
+						}
+					}
+					#endregion
+				}
+
+				Thread.Sleep(resolution);//resolution of this loop
+			}
+		}
+		private void scriptloop()
+		{
+			foreach (SEUtilsScript _script in script)
+			{
+
+				while (DateTime.UtcNow > _script.nextrun)
+				{
+					if (_script.interval <= 0) break;
+					_script.lastrun = _script.nextrun;
+					_script.nextrun = _script.nextrun + TimeSpan.FromSeconds(_script.interval);
+				}
+			}
+
+			while (m_running)
+			{
+				foreach(SEUtilsScript _script in script)
+				{
+
+					if(DateTime.UtcNow > _script.nextrun)
+					{
+						if (_script.interval <= 0) continue;
+						_script.lastrun = _script.nextrun;
+						_script.nextrun = _script.nextrun + TimeSpan.FromSeconds(_script.interval);
+						if (_script.enabled)
+						{
+							foreach ( SEUtilsChatCommands _command in _script.commands)
+							{
+								Thread.Sleep(_command.delay * 1000);
+								ChatManager.Instance.SendPublicChatMessage(_command.ToString());
 							}
 						}
 					}
-					catch (Exception)
-					{
-						continue;//no biggie keep going. 
-					}
 				}
+				Thread.Sleep(1000);
 			}
 		}
 		private CharacterEntity getCharacter(ulong steamid)
@@ -361,7 +681,6 @@ namespace SEUtils
 			}
 			ChatManager.Instance.SendPrivateChatMessage(steamid, "Could not find your position, you may be in a cockpit.");
 		}
-
 		public void floatingObjectCleanup(bool force)
 		{
 			//get worldsize information
@@ -374,7 +693,6 @@ namespace SEUtils
 					obj.Dispose();
 			}
 		}
-
 		public void factionCleanup(bool force)
 		{
 			List<Faction> factionList = FactionsManager.Instance.Factions;
@@ -389,9 +707,10 @@ namespace SEUtils
 
 			}
 		}
-
 		public void shipCleanup(bool force, ulong steamid, int dist)
 		{
+			if (steamid == 0) 
+				throw new UtilsNoSteamIDException("Server GUI cannot issue this command.");
 			Vector3Wrapper myPos = getCharacter(steamid).Position;
 			int movedist = 50;
 			List<CubeGridEntity> shipList = SectorObjectManager.Instance.GetTypedInternalData<CubeGridEntity>();
@@ -420,19 +739,16 @@ namespace SEUtils
 		}
 		#endregion
 		#region "EventHandlers"
-
 		public override void Update()
 		{
 			return;
 		}
-
 		public override void Shutdown()
 		{
 			m_running = false;
 			saveXML();
 			return;
 		}
-
 		public void OnChatReceived(SEModAPIExtensions.API.ChatManager.ChatEvent obj)
 		{
 			//PlayerMap.Instance.GetSteamId(long entityId)
@@ -463,86 +779,38 @@ namespace SEUtils
 					allowPos = false;
 				}
 
-				if (isadmin && words[0].ToLower() == "/util-cleanup")
-				{
-					if (words.Count() >= 2)
-					{
-						if(words[1].ToLower() == "fo" || words[1].ToLower() == "floating-object")
-						{
-							bool force = false;
-							if(words.Count() >= 3)
-								if(words[2].ToLower() == "force")
-								{
-									force = true;
-								}
-							try
-							{
-								floatingObjectCleanup(force);
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Floating object cleanup suceeded.");
-							}
-							catch (Exception ex)
-							{
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Floating object cleanup failed: " + ex.Message.ToString());
-							}
-						}
-						if (words[1].ToLower() == "fa" || words[1].ToLower() == "faction")
-						{
-							bool force = false;
-							if (words.Count() >= 3)
-								if (words[2].ToLower() == "force")
-								{
-									force = true;
-								}
-							try
-							{
-								factionCleanup(force);
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Faction cleanup suceeded.");
-							}
-							catch (Exception ex)
-							{
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Faction cleanup failed: " + ex.Message.ToString());
-							}
-						}
-						if (words[1].ToLower() == "ship" || words[1].ToLower() == "ships")
-						{
-							bool force = false;
-							int dist = 0;
-							if (words.Count() >= 4)
-							{
-								if (words[2].ToLower() == "force")
-								{
-									force = true;
-								}
-								if (words[2].ToLower() == "force" || words[2].ToLower() == "rescue")
-								{
-									
-									try
-									{
-										dist = Convert.ToInt32(words[3]);
-										if (dist < 10) throw new Exception("distance must be greater than 10km");
-										shipCleanup(force, obj.sourceUserId, dist);
-										ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Ship cleanup suceeded.");
-									}
-									catch (Exception ex)
-									{
-										ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Ship cleanup failed: " + ex.Message.ToString());
-									}									
-								}
 
-							}
-							else
-								ChatManager.Instance.SendPrivateChatMessage(obj.sourceUserId, "Must specify 'force' or 'rescue', and a distance. ");
-						}
-					}
-					return;
-				}
 			}
 			return; 
 		}
-
 		public void OnChatSent(SEModAPIExtensions.API.ChatManager.ChatEvent obj)
 		{
 			return; //no handling for motd right now
+		}
+		public void OnCubeGridLoaded(CubeGridEntity grid)
+		{
+
+		}
+		public void OnCubeGridDeleted(CubeGridEntity grid)
+		{
+			if(m_cubeGridsEntityID.Exists(x => x == grid.EntityId))
+			{
+				m_cubeGridsEntityID.Remove(grid.EntityId);
+			}
+		}
+		public void OnCubeGridCreated(CubeGridEntity grid)
+		{
+			if (!m_loading)
+			{
+				m_cubeGridsEntityID.Add(grid.EntityId);
+				if(debugging)
+					LogManager.APILog.WriteLineAndConsole("OnCubeGridCreated Added " + grid.EntityId.ToString());
+			}
+			
+		}
+		public void OnCubeGridMoved(CubeGridEntity grid)
+		{
+
 		}
 		#endregion
 		#region "Chat Callbacks"
@@ -592,9 +860,88 @@ namespace SEUtils
 				//donothing
 			}
 		}
+		public void UtilsCleanup(ChatManager.ChatEvent _event)
+		{
+			try
+			{
+				string[] words = _event.message.Split(' ');
+				if (words.Count() >= 2)
+				{
+					if (words[1].ToLower() == "fo" || words[1].ToLower() == "floating-object")
+					{
+						bool force = false;
+						if (words.Count() >= 3)
+							if (words[2].ToLower() == "force")
+							{
+								force = true;
+							}
+						try
+						{
+							floatingObjectCleanup(force);
+							ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Floating object cleanup suceeded.");
+						}
+						catch (Exception ex)
+						{
+							ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Floating object cleanup failed: " + ex.Message.ToString());
+						}
+					}
+					if (words[1].ToLower() == "fa" || words[1].ToLower() == "faction")
+					{
+						bool force = false;
+						if (words.Count() >= 3)
+							if (words[2].ToLower() == "force")
+							{
+								force = true;
+							}
+						try
+						{
+							factionCleanup(force);
+							ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Faction cleanup suceeded.");
+						}
+						catch (Exception ex)
+						{
+							ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Faction cleanup failed: " + ex.Message.ToString());
+						}
+					}
+					if (words[1].ToLower() == "ship" || words[1].ToLower() == "ships")
+					{
+						bool force = false;
+						int dist = 0;
+						if (words.Count() >= 4)
+						{
+							if (words[2].ToLower() == "force")
+							{
+								force = true;
+							}
+							if (words[2].ToLower() == "force" || words[2].ToLower() == "rescue")
+							{
+
+								try
+								{
+									dist = Convert.ToInt32(words[3]);
+									if (dist < 10) throw new Exception("distance must be greater than 10km");
+									shipCleanup(force, _event.sourceUserId, dist);
+									ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Ship cleanup suceeded.");
+								}
+								catch (Exception ex)
+								{
+									ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Ship cleanup failed: " + ex.Message.ToString());
+								}
+							}
+
+						}
+						else
+							ChatManager.Instance.SendPrivateChatMessage(_event.sourceUserId, "Must specify 'force' or 'rescue', and a distance. ");
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				LogManager.APILog.WriteLine("UtilsCleanup: " + ex.ToString());
+			}
+
+		}
 		#endregion
-
-
 		#endregion
 	}
 }
