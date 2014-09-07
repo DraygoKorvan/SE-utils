@@ -78,6 +78,7 @@ namespace SEUtils
 			m_scriptManager.Priority = ThreadPriority.BelowNormal;
 			m_scriptManager.Start();
 
+	
 			#region "Chat Command Registry"
 			//Register Chat Commands
 			ChatManager.ChatCommand command = new ChatManager.ChatCommand();
@@ -338,6 +339,7 @@ namespace SEUtils
 				if(debugging)
 					LogManager.APILog.WriteLineAndConsole("Added " + ship.EntityId.ToString());
 				m_cubeGridsEntityID.Add(ship.EntityId);
+
 			}
 			m_loading = false;
 			while(m_running)
@@ -352,7 +354,12 @@ namespace SEUtils
 						{
 							try
 							{
+								List<CockpitEntity> l_cockpits = new List<CockpitEntity>();
+								List<AntennaEntity> l_antenna = new List<AntennaEntity>();
+								List<BeaconEntity> l_beacon = new List<BeaconEntity>();
+
 								CubeGridEntity ship = (CubeGridEntity)GameEntityManager.GetEntity(shipEntityId);
+
 								if (ship == null)
 								{
 									if (isdebugging)
@@ -360,66 +367,26 @@ namespace SEUtils
 									throw new NullReferenceException();
 
 								}
-								/*if (ship.IsLoading)
-								{
-									foreach (var cubeBlock in ship.CubeBlocks)
-									{
-									}					
-									if (isdebugging)
-										LogManager.APILog.WriteLineAndConsole("Ship is loading: " + shipEntityId.ToString());
-									continue;
-								}*/
-								//experiment, this seems to be stuck to true so ? but we should be allow to continue anyway
-
 								Thread.Yield();//could be an expensive function, lets yeild to the OS every iteration. 
 								try
 								{
 									foreach (CubeBlockEntity cubeBlock in ship.CubeBlocks)
 									{
-										if (cubeBlock is AntennaEntity)
+										if (cubeBlock is CockpitEntity)
+										{
+											CockpitEntity cockpit = (CockpitEntity)cubeBlock;
+											l_cockpits.Add(cockpit);
+										}
+										else if (cubeBlock is AntennaEntity)
 										{
 											if (isdebugging && m_debuglevel > 1)
 											{
 												LogManager.APILog.WriteLineAndConsole("Antenna found getting name - Entityid: " + shipEntityId.ToString());
 											}
 											AntennaEntity antenna = (AntennaEntity)cubeBlock;
-											if (isdebugging && m_debuglevel > 1)
-											{
-												LogManager.APILog.WriteLineAndConsole(antenna.CustomName.ToString());
-											}
-											if (antenna.CustomName != null)
-											{
-												string name = antenna.CustomName;
-												if (name.Length < 4) continue; 
-												if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
-												{
-													Thread.Sleep(10);
-													if (isdebugging && m_debuglevel > 1)
-													{
-														LogManager.APILog.WriteLineAndConsole("Updating antenna name");
-													}
-													name = "Pos: " + ship.Position.ToString();
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
-													antenna.CustomName = name;
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
-												}
-												if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
-												{
-													Thread.Sleep(10);
-													if (isdebugging && m_debuglevel > 1)
-													{
-														LogManager.APILog.WriteLineAndConsole("Updating antenna name");
-													}
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
-													name = "Dir: " + ship.Forward.ToString();
-													antenna.CustomName = name;
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
-												}
-											}
+											l_antenna.Add(antenna);
+											
+											
 										}
 										else if (cubeBlock is BeaconEntity)
 										{
@@ -429,45 +396,126 @@ namespace SEUtils
 												LogManager.APILog.WriteLineAndConsole("Beacon found getting name - Entityid: " + shipEntityId.ToString());
 											}
 											BeaconEntity beacon = (BeaconEntity)cubeBlock;
-											if (isdebugging && m_debuglevel > 1)
+											l_beacon.Add(beacon);
+	
+										}
+									}
+								}
+								catch (Exception ex)
+								{
+									if (isdebugging)
+									{
+										LogManager.APILog.WriteLineAndConsole("Exception thrown when setting beacons/antenna on " + shipEntityId.ToString());
+										LogManager.APILog.WriteLineAndConsole(ex.ToString());
+									}
+									continue;
+								}
+								try
+								{
+									Vector3 forward = new Vector3(0,0,0);
+									foreach (CockpitEntity cockpit in l_cockpits)
+									{
+
+										if(cockpit.PilotEntity != null)
+										{
+											forward = cockpit.Forward;
+										}
+
+										if(forward.Length() == 0)
+										{
+											forward = cockpit.Forward;
+										}
+									}
+									l_cockpits.Clear();
+									foreach (BeaconEntity beacon in l_beacon)
+									{
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(beacon.CustomName.ToString());
+										}
+										if (beacon.CustomName != null)
+										{
+											string name = beacon.CustomName;
+											if (name.Length < 4) continue;
+											if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
 											{
-												LogManager.APILog.WriteLineAndConsole(beacon.CustomName.ToString());
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												name = "Pos: " + ship.Position.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
 											}
-											if (beacon.CustomName != null)
+											if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
 											{
-												string name = beacon.CustomName;
-												if (name.Length < 4) continue; 
-												if (name.Substring(0, 4) == "Pos:" && allowBeaconPos)
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
 												{
-													Thread.Sleep(10);
-													if (isdebugging && m_debuglevel > 1)
-													{
-														LogManager.APILog.WriteLineAndConsole("Updating beacon name");
-													}
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
-													name = "Pos: " + ship.Position.ToString();
-													beacon.CustomName = name;
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
+													LogManager.APILog.WriteLineAndConsole("Updating beacon name");
 												}
-												if (name.Substring(0, 4) == "Dir:" && allowBeaconDir)
-												{
-													Thread.Sleep(10);
-													if (isdebugging && m_debuglevel > 1)
-													{
-														LogManager.APILog.WriteLineAndConsole("Updating beacon name");
-													}
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name before:" + beacon.CustomName.ToString());
+												if (forward.Length() == 0)
 													name = "Dir: " + ship.Forward.ToString();
-													beacon.CustomName = name;
-													if (isdebugging && m_debuglevel > 1)
-														LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
-												}
+												else
+													name = "Dir: " + forward.ToString();
+												beacon.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Beacon name after:" + beacon.CustomName.ToString());
 											}
 										}
 									}
+									l_beacon.Clear();
+
+									foreach (AntennaEntity antenna in l_antenna)
+									{
+										if (isdebugging && m_debuglevel > 1)
+										{
+											LogManager.APILog.WriteLineAndConsole(antenna.CustomName.ToString());
+										}
+										if (antenna.CustomName != null)
+										{
+											string name = antenna.CustomName;
+											if (name.Length < 4) continue;
+											if (name.Substring(0, 4) == "Pos:" && allowAntennaPos)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												name = "Pos: " + ship.Position.ToString();
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+											if (name.Substring(0, 4) == "Dir:" && allowAntennaDir)
+											{
+												Thread.Sleep(10);
+												if (isdebugging && m_debuglevel > 1)
+												{
+													LogManager.APILog.WriteLineAndConsole("Updating antenna name");
+												}
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name before:" + antenna.CustomName.ToString());
+												if (forward.Length() == 0)
+													name = "Dir: " + ship.Forward.ToString();
+												else
+													name = "Dir: " + forward.ToString();
+												antenna.CustomName = name;
+												if (isdebugging && m_debuglevel > 1)
+													LogManager.APILog.WriteLineAndConsole("Antenna name after:" + antenna.CustomName.ToString());
+											}
+										}
+									}
+									l_antenna.Clear();
 								}
 								catch (Exception ex)
 								{
